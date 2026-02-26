@@ -2,6 +2,7 @@ import streamlit as st
 import google.generativeai as genai
 from PIL import Image
 import json
+import pandas as pd
 
 # --- 1. THE DIAMOND PRICING MATRIX ---
 DIAMOND_PRICING = {
@@ -18,16 +19,12 @@ DIAMOND_PRICING = {
 }
 
 # --- 2. MULTI-FACTORY MATH ENGINES ---
-
 def get_metal_loss(factory, purity_string):
-    """Calculates metal loss multiplier based on Factory and Purity"""
     p = str(purity_string).lower()
-    if factory == "Jewel One":
-        return 1.10
-    else: # Creations
-        if 'plat' in p or 'pt' in p:
-            return 1.10 # 10% for Plat
-        return 1.08 # 8% for Gold
+    if factory == "Jewel One": return 1.10
+    else:
+        if 'plat' in p or 'pt' in p: return 1.10
+        return 1.08
 
 def get_gold_price_per_gram(gold_fix_oz, purity_string):
     pure_price_per_gram = gold_fix_oz / 31.1035
@@ -41,7 +38,6 @@ def get_gold_price_per_gram(gold_fix_oz, purity_string):
     return pure_price_per_gram * multiplier
 
 def get_assembly_cost(factory, item_type, ring_type):
-    """Calculates Assembly + Rhodium combined"""
     it = str(item_type).lower()
     if factory == "Jewel One":
         if 'ring' in it: return 7.00
@@ -51,23 +47,22 @@ def get_assembly_cost(factory, item_type, ring_type):
         if 'bracelet' in it: return 53.00
         if '2 pc' in it: return 11.00
         return 0.00
-    else: # Creations
-        if 'necklace' in it: return 100.00 # $80 CFP + $20 Rhod
-        if 'bracelet' in it: return 40.00 # $30 CFP + $10 Rhod
-        if 'earring' in it or 'pendant' in it or '2 pc' in it: return 16.00 # Bands cost fallback
+    else:
+        if 'necklace' in it: return 100.00
+        if 'bracelet' in it: return 40.00
+        if 'earring' in it or 'pendant' in it or '2 pc' in it: return 16.00
         if 'ring' in it:
             rt = str(ring_type).lower()
-            if 'band' in rt: return 16.00 # $12 CFP + $4 Rhod
-            if 'bridal' in rt: return 19.00 # $15 CFP + $4 Rhod
-            if 'eternity' in rt: return 22.00 # $18 CFP + $4 Rhod
-            return 22.00 # Max fee fallback
+            if 'band' in rt: return 16.00
+            if 'bridal' in rt: return 19.00
+            if 'eternity' in rt: return 22.00
+            return 22.00
         return 16.00
 
 def get_setting_cost(factory, total_carats, total_stones, style, shape, purity_string):
     if int(total_stones) == 0: return 0.00
     individual_wt = float(total_carats) / int(total_stones)
-    style = str(style).lower()
-    shape = str(shape).lower()
+    style, shape = str(style).lower(), str(shape).lower()
     is_plat = 'plat' in str(purity_string).lower() or 'pt' in str(purity_string).lower()
 
     if factory == "Jewel One":
@@ -78,23 +73,18 @@ def get_setting_cost(factory, total_carats, total_stones, style, shape, purity_s
         elif 5.00 <= individual_wt <= 9.99: return 5.00
         elif individual_wt >= 10.00: return 8.00
         return 0.00
-    else: # Creations
+    else:
         micro_rate = 0.50 if is_plat else 0.35
         round_1_2_rate = 3.00 if is_plat else 2.00
         fancy_or_large_rate = 6.00 if is_plat else 5.00
         claw_extra = 2.00 if 'claw' in style else 0.00
 
-        if 'micro' in style:
-            base = micro_rate
+        if 'micro' in style: base = micro_rate
         elif 'round' in shape:
-            if individual_wt < 1.00:
-                base = micro_rate
-            elif 1.00 <= individual_wt <= 2.00:
-                base = round_1_2_rate
-            else:
-                base = fancy_or_large_rate
-        else: # Fancy Shapes
-            base = fancy_or_large_rate
+            if individual_wt < 1.00: base = micro_rate
+            elif 1.00 <= individual_wt <= 2.00: base = round_1_2_rate
+            else: base = fancy_or_large_rate
+        else: base = fancy_or_large_rate
         
         return base + claw_extra
 
@@ -115,124 +105,134 @@ def get_diamond_price(shape, total_carats, total_stones, quality_index):
             
     return shape_dict[best_key][quality_index]
 
+
 # --- 3. THE STREAMLIT APP UI ---
 st.set_page_config(page_title="Kira Jewels AI Quoter", page_icon="💎", layout="wide")
-st.title("💎 Kira Jewels AI Quoting Bot")
-st.write("Upload a CAD technical drawing, and the AI will extract the details and generate a B2B quote and Tag Price.")
+st.title("💎 Kira Jewels AI Batch Quoting Bot")
+st.write("Upload one or more CAD drawings. The AI will extract the details, calculate B2B prices, and allow you to export to Excel/CSV.")
 
 with st.sidebar:
     st.header("⚙️ Settings")
-    
-    # NEW: Factory Selection Dropdown
     selected_factory = st.selectbox("Select Factory", ["Jewel One", "Creations"])
     st.divider()
-    
-    gold_fix_oz = st.number_input("Live Gold Fix ($/oz)", min_value=0.0, value=5000.00)
+    gold_fix_oz = st.number_input("Live Gold Fix ($/oz)", min_value=0.0, value=2030.00)
     
     quality_mapping = {"F+VVS+": 0, "F+VS+": 1, "G+VS+": 2}
-    selected_quality = st.selectbox("Select Diamond Quality", options=list(quality_mapping.keys()), index=1)
+    selected_quality = st.selectbox("Select Diamond Quality", options=list(quality_mapping.keys()), index=2)
     quality_index = quality_mapping[selected_quality]
 
-uploaded_file = st.file_uploader("Upload CAD Drawing (JPG/PNG)", type=["jpg", "jpeg", "png"])
+# ENABLE MULTIPLE FILES
+uploaded_files = st.file_uploader("Upload CAD Drawing(s)", type=["jpg", "jpeg", "png"], accept_multiple_files=True)
 
-if uploaded_file is not None:
-    image = Image.open(uploaded_file)
-    st.image(image, caption="Uploaded CAD", use_container_width=True)
-    
-    if st.button("Extract & Quote with AI", type="primary"):
-        with st.spinner(f"AI is analyzing the CAD for {selected_factory}..."):
-            try:
-                genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
-                model = genai.GenerativeModel('gemini-3-flash-preview')
-                
-                # UPDATED PROMPT: Asks to categorize the ring type for Creations logic
-                prompt = """
-                Analyze this jewelry CAD technical drawing. Extract the following details and return ONLY a raw JSON object with these exact keys. Do not include markdown formatting.
+if uploaded_files:
+    if st.button("Extract & Quote All", type="primary"):
+        all_results = []
+        progress_bar = st.progress(0)
+        
+        # Configure Gemini outside the loop for speed
+        genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
+        model = genai.GenerativeModel('gemini-2.0-flash')
+        
+        # The exact same robust prompt
+        prompt = """
+        Analyze this jewelry CAD technical drawing. Extract the following details and return ONLY a raw JSON object with these exact keys. Do not include markdown formatting.
+        {
+            "item_type": "Determine if it is a Ring, Earring, Pendant, Necklace, Bracelet, or 2 PC",
+            "ring_type": "If item_type is Ring, classify as 'Band', 'Bridal', 'Eternity', or 'Unknown'. If not a ring, output 'N/A'",
+            "metal_purity": "Extract metal purity (e.g., '14K', '18K', 'PLAT')",
+            "metal_net_wt_g": <float of the Net WT in grams>,
+            "setting_style": "<string of the setting style (e.g. BAZZEL, micro prong, claw prong)>",
+            "stones": [
                 {
-                    "item_type": "Determine if it is a Ring, Earring, Pendant, Necklace, Bracelet, or 2 PC",
-                    "ring_type": "If item_type is Ring, classify as 'Band', 'Bridal', 'Eternity', or 'Unknown'. If not a ring, output 'N/A'",
-                    "metal_purity": "Extract metal purity (e.g., '14K', '18K', 'PLAT')",
-                    "metal_net_wt_g": <float of the Net WT in grams>,
-                    "setting_style": "<string of the setting style (e.g. BAZZEL, micro prong, claw prong)>",
-                    "stones": [
-                        {
-                            "shape": "Determine the shape (e.g. Round, Oval, Emerald, Pear, etc.)",
-                            "qty": <integer of total stones for this specific shape>,
-                            "carat_weight": <float of the total carat weight for this specific shape>
-                        }
-                    ]
+                    "shape": "Determine the shape (e.g. Round, Oval, Emerald, Pear, etc.)",
+                    "qty": <integer of total stones for this specific shape>,
+                    "carat_weight": <float of the total carat weight for this specific shape>
                 }
-                """
-                
-                response = model.generate_content([prompt, image])
-                raw_json = response.text.strip().replace("```json", "").replace("```", "")
-                cad_data = json.loads(raw_json)
-                
-                st.success("CAD Data Successfully Extracted!")
-                
-                # Setup Display Variables
-                metal_purity = cad_data.get('metal_purity', '14K')
-                ring_type = cad_data.get('ring_type', 'Unknown')
-                loss_multiplier = get_metal_loss(selected_factory, metal_purity)
-                loss_percentage = int(round((loss_multiplier - 1.0) * 100))
-                
-                # Display Top-Level Details
-                col1, col2 = st.columns(2)
-                with col1:
-                    st.write(f"**Item Type:** {cad_data['item_type']} ({ring_type})")
-                    st.write(f"**Metal Specs:** {metal_purity} | {cad_data.get('metal_net_wt_g', 0)} g")
-                with col2:
-                    st.write(f"**Factory Pricing:** {selected_factory}")
-                    st.write(f"**Setting Style:** {cad_data.get('setting_style', 'Standard')}")
+            ]
+        }
+        """
 
-                # CALCULATE COSTS
-                calculated_gram_price = get_gold_price_per_gram(gold_fix_oz, metal_purity)
-                metal_cost = (float(cad_data.get('metal_net_wt_g', 0)) * loss_multiplier) * calculated_gram_price
-                assembly_cost = get_assembly_cost(selected_factory, cad_data['item_type'], ring_type)
-                
-                total_setting_cost = 0
-                total_diamond_cost = 0
-                total_stone_count = 0
-                stone_breakdowns = []
-                
-                st.write("---")
-                st.write("### 💎 Stone Breakdown")
-                
-                for stone in cad_data.get('stones', []):
-                    shape = stone['shape']
-                    qty = int(stone['qty'])
-                    carats = float(stone['carat_weight'])
+        for i, file in enumerate(uploaded_files):
+            # Create a collapsible box for each CAD's visual results
+            with st.expander(f"🖼️ Result: {file.name}", expanded=False):
+                try:
+                    image = Image.open(file)
+                    st.image(image, caption=file.name, width=300)
                     
-                    if qty > 0 and carats > 0:
-                        total_stone_count += qty
-                        
-                        group_setting_cost = qty * get_setting_cost(selected_factory, carats, qty, cad_data.get('setting_style', ''), shape, metal_purity)
-                        total_setting_cost += group_setting_cost
-                        
-                        price_per_carat = get_diamond_price(shape, carats, qty, quality_index)
-                        group_diamond_cost = carats * price_per_carat
-                        total_diamond_cost += group_diamond_cost
-                        
-                        st.write(f"- **{shape}**: {qty} stones | {carats} ct total | (${price_per_carat}/ct)")
-                        stone_breakdowns.append(f"{shape} ({qty} stones): ${group_diamond_cost:,.2f} + ${group_setting_cost:,.2f} setting")
-
-                # Final Math
-                final_cost = metal_cost + assembly_cost + total_setting_cost + total_diamond_cost
-                tag_price = (final_cost * 1.13) * 1.8
-                
-                st.divider()
-                st.header(f"💰 Final B2B Cost ({selected_factory}): **${final_cost:,.2f}**")
-                st.success(f"🏷️ **Suggested Tag Price:** **${tag_price:,.2f}**")
-                
-                with st.expander("View Detailed Cost Breakdown"):
-                    st.write(f"- **Billed Metal Cost** ({metal_purity} at ${calculated_gram_price:,.2f}/g + {loss_percentage}% loss): ${metal_cost:,.2f}")
-                    st.write(f"- **Assembly & Rhodium**: ${assembly_cost:,.2f}")
-                    st.write(f"- **Total Setting Labor** ({total_stone_count} total stones): ${total_setting_cost:,.2f}")
-                    st.write(f"- **Total Diamond Cost** ({selected_quality}): ${total_diamond_cost:,.2f}")
-                    st.write("--- *Stone Group Breakdown* ---")
-                    for breakdown in stone_breakdowns:
-                        st.write(f"  - {breakdown}")
+                    response = model.generate_content([prompt, image])
+                    raw_json = response.text.strip().replace("```json", "").replace("```", "")
+                    cad_data = json.loads(raw_json)
                     
-            except Exception as e:
-                st.error(f"An error occurred during extraction. Details: {e}")
+                    # Core Data
+                    metal_purity = cad_data.get('metal_purity', '14K')
+                    ring_type = cad_data.get('ring_type', 'Unknown')
+                    loss_multiplier = get_metal_loss(selected_factory, metal_purity)
+                    
+                    # Math Calcs
+                    calculated_gram_price = get_gold_price_per_gram(gold_fix_oz, metal_purity)
+                    metal_cost = (float(cad_data.get('metal_net_wt_g', 0)) * loss_multiplier) * calculated_gram_price
+                    assembly_cost = get_assembly_cost(selected_factory, cad_data['item_type'], ring_type)
+                    
+                    total_setting_cost = 0
+                    total_diamond_cost = 0
+                    total_stone_count = 0
+                    
+                    for stone in cad_data.get('stones', []):
+                        shape = stone['shape']
+                        qty = int(stone['qty'])
+                        carats = float(stone['carat_weight'])
+                        
+                        if qty > 0 and carats > 0:
+                            total_stone_count += qty
+                            total_setting_cost += (qty * get_setting_cost(selected_factory, carats, qty, cad_data.get('setting_style', ''), shape, metal_purity))
+                            total_diamond_cost += (carats * get_diamond_price(shape, carats, qty, quality_index))
 
+                    final_cost = metal_cost + assembly_cost + total_setting_cost + total_diamond_cost
+                    tag_price = (final_cost * 1.13) * 1.8
+                    
+                    # Display the quick numbers in the UI expander
+                    st.success(f"**B2B Cost:** ${final_cost:,.2f} | **Tag Price:** ${tag_price:,.2f}")
+                    
+                    # Save flat data to our list for Excel export
+                    all_results.append({
+                        "File Name": file.name,
+                        "Factory": selected_factory,
+                        "Item Type": f"{cad_data.get('item_type', 'Unknown')} ({ring_type})",
+                        "Metal Specs": f"{metal_purity} ({cad_data.get('metal_net_wt_g', 0)}g)",
+                        "Total Stones": total_stone_count,
+                        "Diamond Quality": selected_quality,
+                        "Metal Cost ($)": round(metal_cost, 2),
+                        "Assembly/Rhod ($)": round(assembly_cost, 2),
+                        "Setting Cost ($)": round(total_setting_cost, 2),
+                        "Diamond Cost ($)": round(total_diamond_cost, 2),
+                        "Final B2B Cost ($)": round(final_cost, 2),
+                        "Tag Price ($)": round(tag_price, 2)
+                    })
+
+                except Exception as e:
+                    st.error(f"Failed to extract data from {file.name}. Error: {e}")
+            
+            # Update progress bar
+            progress_bar.progress((i + 1) / len(uploaded_files))
+        
+        # --- BATCH EXPORT SECTION ---
+        if all_results:
+            st.divider()
+            st.write("### 📊 Batch Summary")
+            
+            # Convert list of results to a Pandas DataFrame
+            df = pd.DataFrame(all_results)
+            
+            # Show the table right on the screen
+            st.dataframe(df, use_container_width=True)
+            
+            # Create a CSV version (Opens natively in Excel)
+            csv_data = df.to_csv(index=False).encode('utf-8')
+            
+            st.download_button(
+                label="📥 Download Quotes to Excel/CSV",
+                data=csv_data,
+                file_name="Kira_Jewels_Batch_Quotes.csv",
+                mime="text/csv",
+                type="primary"
+            )
