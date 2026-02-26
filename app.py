@@ -6,7 +6,6 @@ import json
 # ==========================================
 # 🛑 PASTE YOUR API KEY BETWEEN THE QUOTES
 # ==========================================
-MY_GEMINI_API_KEY = "AIzaSyDjzeZXkqXx_4Qa2CgxX_ohLVH0x40Zzxk"
 
 # --- 1. THE DIAMOND PRICING MATRIX ---
 DIAMOND_PRICING = {
@@ -97,7 +96,7 @@ if uploaded_file is not None:
     if st.button("Extract & Quote with AI", type="primary"):
         with st.spinner("AI is analyzing the CAD..."):
             try:
-                genai.configure(api_key=MY_GEMINI_API_KEY)
+                genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
                 model = genai.GenerativeModel('gemini-3-flash-preview')
                 
                 prompt = """
@@ -155,4 +154,5 @@ if uploaded_file is not None:
                     st.write(f"- Diamonds ({selected_quality} at ${price_per_carat}/ct): ${diamond_cost:,.2f}")
                     
             except Exception as e:
+
                 st.error(f"An error occurred during extraction. Check your API key. Details: {e}")
