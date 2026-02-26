@@ -131,7 +131,7 @@ if uploaded_files:
         
         # Configure Gemini outside the loop for speed
         genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
-        model = genai.GenerativeModel('gemini-2.0-flash')
+        model = genai.GenerativeModel('gemini-2.5-flash')
         
         # The exact same robust prompt
         prompt = """
@@ -236,3 +236,4 @@ if uploaded_files:
                 mime="text/csv",
                 type="primary"
             )
+
