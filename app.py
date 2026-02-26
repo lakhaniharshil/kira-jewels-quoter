@@ -3,6 +3,7 @@ import google.generativeai as genai
 from PIL import Image
 import json
 import pandas as pd
+import math
 
 # --- 1. THE DIAMOND PRICING MATRIX ---
 DIAMOND_PRICING = {
@@ -108,8 +109,8 @@ def get_diamond_price(shape, total_carats, total_stones, quality_index):
 
 # --- 3. THE STREAMLIT APP UI ---
 st.set_page_config(page_title="Kira Jewels AI Quoter", page_icon="💎", layout="wide")
-st.title("💎 Kira Jewels AI Batch Quoting Bot")
-st.write("Upload one or more CAD drawings. The AI will extract the details, calculate B2B prices, and allow you to export to Excel/CSV.")
+st.title("💎 Kira Jewels Tag Price Generator")
+st.write("Upload CAD drawing(s) to automatically generate B2B retail tag prices and export a summary sheet.")
 
 with st.sidebar:
     st.header("⚙️ Settings")
@@ -121,19 +122,16 @@ with st.sidebar:
     selected_quality = st.selectbox("Select Diamond Quality", options=list(quality_mapping.keys()), index=1)
     quality_index = quality_mapping[selected_quality]
 
-# ENABLE MULTIPLE FILES
 uploaded_files = st.file_uploader("Upload CAD Drawing(s)", type=["jpg", "jpeg", "png"], accept_multiple_files=True)
 
 if uploaded_files:
-    if st.button("Extract & Quote All", type="primary"):
+    if st.button("Generate Tag Prices", type="primary"):
         all_results = []
         progress_bar = st.progress(0)
         
-        # Configure Gemini outside the loop for speed
         genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
-        model = genai.GenerativeModel('gemini-2.5-flash')
+        model = genai.GenerativeModel('gemini-2.0-flash')
         
-        # The exact same robust prompt
         prompt = """
         Analyze this jewelry CAD technical drawing. Extract the following details and return ONLY a raw JSON object with these exact keys. Do not include markdown formatting.
         {
@@ -153,8 +151,7 @@ if uploaded_files:
         """
 
         for i, file in enumerate(uploaded_files):
-            # Create a collapsible box for each CAD's visual results
-            with st.expander(f"🖼️ Result: {file.name}", expanded=False):
+            with st.expander(f"🖼️ File: {file.name}", expanded=False):
                 try:
                     image = Image.open(file)
                     st.image(image, caption=file.name, width=300)
@@ -163,79 +160,93 @@ if uploaded_files:
                     raw_json = response.text.strip().replace("```json", "").replace("```", "")
                     cad_data = json.loads(raw_json)
                     
-                    # Core Data
-                    metal_purity = cad_data.get('metal_purity', '14K')
+                    metal_purity = str(cad_data.get('metal_purity', '14K'))
                     ring_type = cad_data.get('ring_type', 'Unknown')
                     loss_multiplier = get_metal_loss(selected_factory, metal_purity)
+                    metal_weight = round(float(cad_data.get('metal_net_wt_g', 0)), 2)
                     
-                    # Math Calcs
                     calculated_gram_price = get_gold_price_per_gram(gold_fix_oz, metal_purity)
-                    metal_cost = (float(cad_data.get('metal_net_wt_g', 0)) * loss_multiplier) * calculated_gram_price
+                    metal_cost = (metal_weight * loss_multiplier) * calculated_gram_price
                     assembly_cost = get_assembly_cost(selected_factory, cad_data['item_type'], ring_type)
                     
                     total_setting_cost = 0
                     total_diamond_cost = 0
-                    total_stone_count = 0
+                    
+                    # Logic to find the Center Stone (Largest individual stone)
+                    total_carats_all = 0.0
+                    max_individual_wt = -1.0
+                    ctr_shape = "N/A"
+                    ctr_wt = 0.0
                     
                     for stone in cad_data.get('stones', []):
-                        shape = stone['shape']
+                        shape = str(stone['shape']).upper()
                         qty = int(stone['qty'])
                         carats = float(stone['carat_weight'])
                         
                         if qty > 0 and carats > 0:
-                            total_stone_count += qty
+                            total_carats_all += carats
+                            ind_wt = carats / qty
+                            
+                            # Check if this is the largest individual stone in the piece
+                            if ind_wt > max_individual_wt:
+                                max_individual_wt = ind_wt
+                                ctr_shape = shape
+                                ctr_wt = carats # Total weight of the largest stone's group
+                            
+                            # Standard Cost Calcs
                             total_setting_cost += (qty * get_setting_cost(selected_factory, carats, qty, cad_data.get('setting_style', ''), shape, metal_purity))
                             total_diamond_cost += (carats * get_diamond_price(shape, carats, qty, quality_index))
 
+                    # Calculate Final Costs and Round Tag Price Up to Nearest $5
                     final_cost = metal_cost + assembly_cost + total_setting_cost + total_diamond_cost
-                    tag_price = (final_cost * 1.13) * 1.8
+                    raw_tag_price = (final_cost * 1.13) * 1.8
+                    tag_price = math.ceil(raw_tag_price / 5.0) * 5
                     
-                    # Display the quick numbers in the UI expander
-                    st.success(f"**B2B Cost:** ${final_cost:,.2f} | **Tag Price:** ${tag_price:,.2f}")
+                    # --- DISPLAY IN UI FOR THE TEAM ---
+                    st.divider()
+                    st.header(f"💰 Final B2B Cost: **${final_cost:,.2f}**")
+                    st.success(f"🏷️ **Suggested Tag Price:** **${tag_price:,.2f}**")
                     
-                    # Save flat data to our list for Excel export
+                    with st.expander("View Detailed Cost Breakdown"):
+                        st.write(f"- **Billed Metal Cost**: ${metal_cost:,.2f}")
+                        st.write(f"- **Assembly & Rhodium**: ${assembly_cost:,.2f}")
+                        st.write(f"- **Total Setting Labor**: ${total_setting_cost:,.2f}")
+                        st.write(f"- **Total Diamond Cost**: ${total_diamond_cost:,.2f}")
+                        st.write(f"--- *Specs: {metal_purity} | {metal_weight}g | {round(total_carats_all, 2)} CTW* ---")
+                        st.write(f"--- *Center Stone: {ctr_shape} ({round(ctr_wt, 2)} CTW)* ---")
+                    
+                    # --- SAVE FOR EXPORT EXACTLY AS REQUESTED ---
                     all_results.append({
-                        "File Name": file.name,
-                        "Factory": selected_factory,
-                        "Item Type": f"{cad_data.get('item_type', 'Unknown')} ({ring_type})",
-                        "Metal Specs": f"{metal_purity} ({cad_data.get('metal_net_wt_g', 0)}g)",
-                        "Total Stones": total_stone_count,
-                        "Diamond Quality": selected_quality,
-                        "Metal Cost ($)": round(metal_cost, 2),
-                        "Assembly/Rhod ($)": round(assembly_cost, 2),
-                        "Setting Cost ($)": round(total_setting_cost, 2),
-                        "Diamond Cost ($)": round(total_diamond_cost, 2),
-                        "Final B2B Cost ($)": round(final_cost, 2),
-                        "Tag Price ($)": round(tag_price, 2)
+                        "Style no.": file.name,
+                        "Image": "",  # Ignored/blank column
+                        "KT & Color": metal_purity,
+                        "Gms": metal_weight,
+                        "CT TW": round(total_carats_all, 2),
+                        "Ctr Shape": ctr_shape,
+                        "Ctr Wt": round(ctr_wt, 2),
+                        "DIA Qlty": selected_quality,
+                        "Tag Price": f"${tag_price:,.2f}"
                     })
 
                 except Exception as e:
                     st.error(f"Failed to extract data from {file.name}. Error: {e}")
             
-            # Update progress bar
             progress_bar.progress((i + 1) / len(uploaded_files))
         
         # --- BATCH EXPORT SECTION ---
         if all_results:
             st.divider()
-            st.write("### 📊 Batch Summary")
+            st.write("### 📊 Final Export Table")
             
-            # Convert list of results to a Pandas DataFrame
             df = pd.DataFrame(all_results)
-            
-            # Show the table right on the screen
             st.dataframe(df, use_container_width=True)
             
-            # Create a CSV version (Opens natively in Excel)
             csv_data = df.to_csv(index=False).encode('utf-8')
             
             st.download_button(
-                label="📥 Download Quotes to Excel/CSV",
+                label="📥 Download to Excel/CSV",
                 data=csv_data,
-                file_name="Kira_Jewels_Batch_Quotes.csv",
+                file_name="Kira_Jewels_Tag_Prices.csv",
                 mime="text/csv",
                 type="primary"
             )
-
-
-
