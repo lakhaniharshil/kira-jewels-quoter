@@ -77,10 +77,10 @@ st.write("Upload a CAD technical drawing, and the AI will extract the details an
 
 with st.sidebar:
     st.header("⚙️ Settings")
-    gold_fix_oz = st.number_input("Live Gold Fix ($/oz)", min_value=0.0, value=2030.00)
+    gold_fix_oz = st.number_input("Live Gold Fix ($/oz)", min_value=0.0, value=5000.00)
     
     quality_mapping = {"F+VVS+": 0, "F+VS+": 1, "G+VS+": 2}
-    selected_quality = st.selectbox("Select Diamond Quality", options=list(quality_mapping.keys()), index=2)
+    selected_quality = st.selectbox("Select Diamond Quality", options=list(quality_mapping.keys()), index=1)
     quality_index = quality_mapping[selected_quality]
 
 uploaded_file = st.file_uploader("Upload CAD Drawing (JPG/PNG)", type=["jpg", "jpeg", "png"])
@@ -186,3 +186,4 @@ if uploaded_file is not None:
                     
             except Exception as e:
                 st.error(f"An error occurred during extraction. Details: {e}")
+
