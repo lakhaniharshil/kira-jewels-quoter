@@ -135,6 +135,7 @@ if uploaded_files:
         prompt = """
         Analyze this jewelry CAD technical drawing. Extract the following details and return ONLY a raw JSON object with these exact keys. Do not include markdown formatting.
         {
+            "style_number": "Extract the style number, SKU, or item number from the CAD image. If not found, return ''",
             "item_type": "Determine if it is a Ring, Earring, Pendant, Necklace, Bracelet, or 2 PC",
             "ring_type": "If item_type is Ring, classify as 'Band', 'Bridal', 'Eternity', or 'Unknown'. If not a ring, output 'N/A'",
             "metal_purity": "Extract metal purity (e.g., '14K', '18K', 'PLAT')",
@@ -159,6 +160,10 @@ if uploaded_files:
                     response = model.generate_content([prompt, image])
                     raw_json = response.text.strip().replace("```json", "").replace("```", "")
                     cad_data = json.loads(raw_json)
+                    
+                    # Core info
+                    extracted_style = cad_data.get('style_number', '')
+                    style_no = extracted_style if extracted_style else file.name # Fallback to filename
                     
                     metal_purity = str(cad_data.get('metal_purity', '14K'))
                     ring_type = cad_data.get('ring_type', 'Unknown')
@@ -204,6 +209,7 @@ if uploaded_files:
                     
                     # --- DISPLAY IN UI FOR THE TEAM ---
                     st.divider()
+                    st.write(f"### Style No: **{style_no}**")
                     st.header(f"💰 Final B2B Cost: **${final_cost:,.2f}**")
                     st.success(f"🏷️ **Suggested Tag Price:** **${tag_price:,.2f}**")
                     
@@ -217,7 +223,7 @@ if uploaded_files:
                     
                     # --- SAVE FOR EXPORT EXACTLY AS REQUESTED ---
                     all_results.append({
-                        "Style no.": file.name,
+                        "Style no.": style_no,
                         "Image": "",  # Ignored/blank column
                         "KT & Color": metal_purity,
                         "Gms": metal_weight,
@@ -250,4 +256,3 @@ if uploaded_files:
                 mime="text/csv",
                 type="primary"
             )
-
