@@ -115,7 +115,7 @@ with st.sidebar:
     st.header("⚙️ Settings")
     selected_factory = st.selectbox("Select Factory", ["Jewel One", "Creations"])
     st.divider()
-    gold_fix_oz = st.number_input("Live Gold Fix ($/oz)", min_value=0.0, value=5000)
+    gold_fix_oz = st.number_input("Live Gold Fix ($/oz)", min_value=0.0, value=5000.0)
     
     quality_mapping = {"F+VVS+": 0, "F+VS+": 1, "G+VS+": 2}
     selected_quality = st.selectbox("Select Diamond Quality", options=list(quality_mapping.keys()), index=1)
@@ -236,5 +236,6 @@ if uploaded_files:
                 mime="text/csv",
                 type="primary"
             )
+
 
 
