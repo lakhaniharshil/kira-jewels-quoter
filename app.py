@@ -3,10 +3,6 @@ import google.generativeai as genai
 from PIL import Image
 import json
 
-# ==========================================
-# 🛑 PASTE YOUR API KEY BETWEEN THE QUOTES
-# ==========================================
-
 # --- 1. THE DIAMOND PRICING MATRIX ---
 DIAMOND_PRICING = {
     "round": {"0":[195,145,145], "0.007":[180,130,130], "0.009":[125,75,75], "0.021":[90,40,40], "0.074":[90,40,40], "0.091":[90,40,40], "0.12":[90,40,40], "0.14":[90,40,40], "0.18":[95,45,45], "0.23":[110,60,60], "0.3":[110,60,60], "0.38":[110,60,60], "0.46":[116,66,66], "0.58":[116,66,66], "0.7":[116,66,66], "0.8":[116,66,66], "0.9":[116,66,66], "0.96":[165,115,105], "1.16":[165,115,105], "1.46":[175,125,110], "1.66":[175,125,110], "1.96":[185,135,120], "2.16":[185,135,120], "2.46":[185,135,120], "2.61":[185,135,120], "2.96":[190,140,120], "3.16":[190,140,120], "3.96":[190,140,120], "4.96":[200,150,130], "5.96":[215,165,140], "6.96":[225,175,150], "7.96":[250,200,170], "8.96":[250,200,170]},
@@ -96,19 +92,27 @@ if uploaded_file is not None:
     if st.button("Extract & Quote with AI", type="primary"):
         with st.spinner("AI is analyzing the CAD..."):
             try:
+                # ==========================================
+                # SECURE SECRETS AND UPDATED 3.0 MODEL
+                # ==========================================
                 genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
                 model = genai.GenerativeModel('gemini-3-flash-preview')
                 
+                # UPDATED PROMPT: Asks for an ARRAY of stones to capture multiple shapes
                 prompt = """
                 Analyze this jewelry CAD technical drawing. Extract the following details and return ONLY a raw JSON object with these exact keys. Do not include markdown formatting.
                 {
                     "item_type": "Determine if it is a Ring, Earring, Pendant, Necklace, Bracelet, or 2 PC",
                     "metal_purity": "Extract metal purity (e.g., '14K', '18K')",
                     "metal_net_wt_g": <float of the Net WT in grams>,
-                    "total_stone_qty": <integer of total stones/QTY>,
-                    "stone_shape": "Determine the shape (e.g. Round, Oval, Emerald, Pear, etc.)",
-                    "total_carat_weight": <float of the Total Weight/T.WT>,
-                    "setting_style": "<string of the setting style (e.g. BAZZEL, micro prong)>"
+                    "setting_style": "<string of the setting style (e.g. BAZZEL, micro prong)>",
+                    "stones": [
+                        {
+                            "shape": "Determine the shape (e.g. Round, Oval, Emerald, Pear, etc.)",
+                            "qty": <integer of total stones for this specific shape>,
+                            "carat_weight": <float of the total carat weight for this specific shape>
+                        }
+                    ]
                 }
                 """
                 
@@ -118,41 +122,67 @@ if uploaded_file is not None:
                 
                 st.success("CAD Data Successfully Extracted!")
                 
+                # Display Top-Level Details
                 col1, col2 = st.columns(2)
                 with col1:
                     st.write(f"**Item Type:** {cad_data['item_type']}")
-                    st.write(f"**Metal Specs:** {cad_data['metal_purity']} | {cad_data['metal_net_wt_g']} g")
-                    st.write(f"**Setting Style:** {cad_data['setting_style']}")
+                    st.write(f"**Metal Specs:** {cad_data.get('metal_purity', '14K')} | {cad_data.get('metal_net_wt_g', 0)} g")
                 with col2:
-                    st.write(f"**Stone Shape:** {cad_data['stone_shape']}")
-                    st.write(f"**Stone Quantity:** {cad_data['total_stone_qty']}")
-                    st.write(f"**Total Carat Weight:** {cad_data['total_carat_weight']} ct")
+                    st.write(f"**Setting Style:** {cad_data.get('setting_style', 'Standard')}")
 
                 # CALCULATE COSTS
-                calculated_gram_price = get_gold_price_per_gram(gold_fix_oz, cad_data['metal_purity'])
-                metal_cost = (float(cad_data['metal_net_wt_g']) * 1.10) * calculated_gram_price
-                
+                calculated_gram_price = get_gold_price_per_gram(gold_fix_oz, cad_data.get('metal_purity', '14K'))
+                metal_cost = (float(cad_data.get('metal_net_wt_g', 0)) * 1.10) * calculated_gram_price
                 assembly_cost = get_rhod_and_assembly(cad_data['item_type'])
-                setting_cost = int(cad_data['total_stone_qty']) * get_setting_cost(cad_data['total_carat_weight'], cad_data['total_stone_qty'], cad_data['setting_style'])
                 
-                price_per_carat = get_diamond_price(cad_data['stone_shape'], cad_data['total_carat_weight'], cad_data['total_stone_qty'], quality_index)
-                diamond_cost = float(cad_data['total_carat_weight']) * price_per_carat
+                # Loop through all the extracted stone groups
+                total_setting_cost = 0
+                total_diamond_cost = 0
+                total_stone_count = 0
+                stone_breakdowns = []
                 
-                final_cost = metal_cost + assembly_cost + setting_cost + diamond_cost
+                st.write("---")
+                st.write("### 💎 Stone Breakdown")
                 
-                # TAG PRICE MATH: (Cost + 13%) * 1.8
+                for stone in cad_data.get('stones', []):
+                    shape = stone['shape']
+                    qty = int(stone['qty'])
+                    carats = float(stone['carat_weight'])
+                    
+                    if qty > 0 and carats > 0:
+                        total_stone_count += qty
+                        
+                        # Setting cost for this specific group
+                        group_setting_cost = qty * get_setting_cost(carats, qty, cad_data.get('setting_style', ''))
+                        total_setting_cost += group_setting_cost
+                        
+                        # Diamond cost for this specific group
+                        price_per_carat = get_diamond_price(shape, carats, qty, quality_index)
+                        group_diamond_cost = carats * price_per_carat
+                        total_diamond_cost += group_diamond_cost
+                        
+                        # Show the breakdown to the user on the screen
+                        st.write(f"- **{shape}**: {qty} stones | {carats} ct total | (${price_per_carat}/ct)")
+                        
+                        # Save details for the final cost expander
+                        stone_breakdowns.append(f"{shape} ({qty} stones): ${group_diamond_cost:,.2f} + ${group_setting_cost:,.2f} setting")
+
+                # Final Math
+                final_cost = metal_cost + assembly_cost + total_setting_cost + total_diamond_cost
                 tag_price = (final_cost * 1.13) * 1.8
                 
                 st.divider()
                 st.header(f"💰 Final B2B Cost: **${final_cost:,.2f}**")
                 st.success(f"🏷️ **Suggested Tag Price:** **${tag_price:,.2f}**")
                 
-                with st.expander("View Cost Breakdown"):
-                    st.write(f"- Billed Metal Cost ({cad_data['metal_purity']} at ${calculated_gram_price:,.2f}/g + 10% loss): ${metal_cost:,.2f}")
-                    st.write(f"- Assembly & Rhodium: ${assembly_cost:,.2f}")
-                    st.write(f"- Setting Labor ({cad_data['total_stone_qty']} stones): ${setting_cost:,.2f}")
-                    st.write(f"- Diamonds ({selected_quality} at ${price_per_carat}/ct): ${diamond_cost:,.2f}")
+                with st.expander("View Detailed Cost Breakdown"):
+                    st.write(f"- **Billed Metal Cost** ({cad_data.get('metal_purity', '14K')} at ${calculated_gram_price:,.2f}/g + 10% loss): ${metal_cost:,.2f}")
+                    st.write(f"- **Assembly & Rhodium**: ${assembly_cost:,.2f}")
+                    st.write(f"- **Total Setting Labor** ({total_stone_count} total stones): ${total_setting_cost:,.2f}")
+                    st.write(f"- **Total Diamond Cost** ({selected_quality}): ${total_diamond_cost:,.2f}")
+                    st.write("--- *Stone Group Breakdown* ---")
+                    for breakdown in stone_breakdowns:
+                        st.write(f"  - {breakdown}")
                     
             except Exception as e:
-
-                st.error(f"An error occurred during extraction. Check your API key. Details: {e}")
+                st.error(f"An error occurred during extraction. Details: {e}")
