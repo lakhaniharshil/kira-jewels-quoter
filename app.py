@@ -130,7 +130,7 @@ if uploaded_files:
         progress_bar = st.progress(0)
         
         genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
-        model = genai.GenerativeModel('gemini-2.0-flash')
+        model = genai.GenerativeModel('gemini-2.5-flash')
         
         prompt = """
         Analyze this jewelry CAD technical drawing. Extract the following details and return ONLY a raw JSON object with these exact keys. Do not include markdown formatting.
@@ -250,3 +250,4 @@ if uploaded_files:
                 mime="text/csv",
                 type="primary"
             )
+
