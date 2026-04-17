@@ -203,7 +203,7 @@ if uploaded_files:
                             total_diamond_cost += (carats * get_diamond_price(shape, carats, qty, quality_index))
 
                     # Calculate Final Costs and Round Tag Price Up to Nearest $5
-                    final_cost = metal_cost + assembly_cost + total_setting_cost + total_diamond_cost
+                    final_cost = metal_cost + assembly_cost + total_setting_cost + total_diamond_cost + 30
                     raw_tag_price = (final_cost * 1.13) * 1.8
                     tag_price = math.ceil(raw_tag_price / 5.0) * 5
                     
